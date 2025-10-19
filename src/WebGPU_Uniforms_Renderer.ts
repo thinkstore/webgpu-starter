@@ -1,4 +1,5 @@
 import { Renderer } from "./Renderer";
+import { Utils } from "./Utils";
 
 class Assignable {
   [key: string]: any;
@@ -8,7 +9,7 @@ class Assignable {
   }
 }
 
-class OurStruct /*extends Assignable*/ {
+class OurStruct {
   private buffer: ArrayBuffer;
   public color: Float32Array;
   public scale: Float32Array;
@@ -16,7 +17,6 @@ class OurStruct /*extends Assignable*/ {
 
   constructor() {
     this.buffer = new ArrayBuffer(32); // toplam 32 byte
-
     this.color = new Float32Array(this.buffer, 0, 4); // 4 * 4 byte = 16 byte
     this.scale = new Float32Array(this.buffer, 16, 2); // 2 * 4 byte = 8 byte
     this.offset = new Float32Array(this.buffer, 24, 2); // 2 * 4 byte = 8 byte
@@ -37,11 +37,12 @@ class OurStruct /*extends Assignable*/ {
   }
 }
 
-export class WebGPU_Uniforms_Renderer extends Renderer {
-  private bindGroup!: GPUBindGroup;
-  private ourStruct!: OurStruct;
-  private uniformBuffer!: GPUBuffer;
+class ObjectInfo {
+  constructor(public uniformValues: OurStruct, public uniformBuffer: GPUBuffer, public bindGroup: GPUBindGroup) {}
+}
 
+export class WebGPU_Uniforms_Renderer extends Renderer {
+  private objectInfos: ObjectInfo[] = [];
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
   }
@@ -101,28 +102,30 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
       },
     });
 
-    this.ourStruct = new OurStruct();
-    this.ourStruct.color.set([0, 1, 0, 1]);
-    this.ourStruct.offset.set([-0.5, 0.0]);
+    const kNumObjects = 100;
 
-    this.uniformBuffer = this.device.createBuffer({
-      size: OurStruct.byteLength(),
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    for (let i = 0; i < kNumObjects; i++) {
+      const uniformValues = new OurStruct();
+      uniformValues.color.set([Utils.rand(), Utils.rand(), Utils.rand(), 1]);
+      uniformValues.offset.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)]);
+      uniformValues.scale.set([0.4, 0.4]);
 
-    this.bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
-    });
+      const uniformBuffer = this.device.createBuffer({
+        size: OurStruct.byteLength(),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      const bindGroup = this.device.createBindGroup({
+        label: `bind group for obj: ${i}`,
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+      });
+
+      this.objectInfos.push(new ObjectInfo(uniformValues, uniformBuffer, bindGroup));
+    }
   }
 
   protected frame() {
-    const aspect = this.canvas.width / this.canvas.height;
-    this.ourStruct.scale.set([2 / aspect, 1.5]);
-
-    // copy the values from JavaScript to the GPU
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.ourStruct.getBuffer());
-
     const command_encoder = this.device.createCommandEncoder();
     const curTextureView = this.context.getCurrentTexture().createView();
     const renderPassDescriptor: GPURenderPassDescriptor = {
@@ -139,8 +142,16 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
 
     const pass = command_encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.draw(3);
+
+    const aspect = this.canvas.width / this.canvas.height;
+
+    for (const object of this.objectInfos) {
+      object.uniformValues.scale.set([0.4 / aspect, 0.4]);
+      this.device.queue.writeBuffer(object.uniformBuffer, 0, object.uniformValues.getBuffer());
+      pass.setBindGroup(0, object.bindGroup);
+      pass.draw(3);
+    }
+
     pass.end();
 
     this.device.queue.submit([command_encoder.finish()]);

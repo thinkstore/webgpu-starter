@@ -24,7 +24,18 @@ export class Renderer {
   }
 
   public startRenderLoop() {
-    requestAnimationFrame(this.render);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // const canvas = entry.target;
+        const width = entry.contentBoxSize[0].inlineSize;
+        const height = entry.contentBoxSize[0].blockSize;
+        this.canvas.width = Math.max(1, Math.min(width, this.device.limits.maxTextureDimension2D));
+        this.canvas.height = Math.max(1, Math.min(height, this.device.limits.maxTextureDimension2D));
+        // re-render
+        this.render();
+      }
+    });
+    observer.observe(this.canvas);
   }
 
   public async init() {
@@ -88,7 +99,7 @@ export class Renderer {
       colorAttachments: [
         {
           view: curTextureView,
-          clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
+          clearValue: { r: 0.3, g: 0.3, b: 0.3, a: 1.0 },
           loadOp: "clear",
           storeOp: "store",
         },
