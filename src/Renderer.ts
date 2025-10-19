@@ -8,9 +8,6 @@ export class Renderer {
   protected presentationFormat!: GPUTextureFormat;
   protected pipeline!: GPURenderPipeline;
 
-  private vertexShader!: GPUShaderModule;
-  private fragmentShader!: GPUShaderModule;
-
   constructor(protected canvas: HTMLCanvasElement) {
     if (!canvas) {
       throw new Error("Canvas bos olamaz");

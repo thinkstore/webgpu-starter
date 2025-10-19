@@ -12,14 +12,12 @@ class Assignable {
 class OurStruct {
   private buffer: ArrayBuffer;
   public color: Float32Array;
-  public scale: Float32Array;
   public offset: Float32Array;
 
   constructor() {
     this.buffer = new ArrayBuffer(32); // toplam 32 byte
-    this.color = new Float32Array(this.buffer, 0, 4); // 4 * 4 byte = 16 byte
-    this.scale = new Float32Array(this.buffer, 16, 2); // 2 * 4 byte = 8 byte
-    this.offset = new Float32Array(this.buffer, 24, 2); // 2 * 4 byte = 8 byte
+    this.color = new Float32Array(this.buffer, 0, 4);
+    this.offset = new Float32Array(this.buffer, 16, 2);
   }
 
   getBuffer(): ArrayBuffer {
@@ -32,13 +30,34 @@ class OurStruct {
 
   logValues() {
     console.log("Color:", this.color);
-    console.log("Scale:", this.scale);
     console.log("Offset:", this.offset);
   }
 }
 
+class OtherStruct {
+  private buffer: ArrayBuffer;
+  public scale: Float32Array;
+
+  constructor() {
+    this.buffer = new ArrayBuffer(8);
+    this.scale = new Float32Array(this.buffer);
+  }
+
+  getBuffer(): ArrayBuffer {
+    return this.buffer;
+  }
+
+  static byteLength() {
+    return 8;
+  }
+
+  logValues() {
+    console.log("Scale:", this.scale);
+  }
+}
+
 class ObjectInfo {
-  constructor(public uniformValues: OurStruct, public uniformBuffer: GPUBuffer, public bindGroup: GPUBindGroup) {}
+  constructor(public uniformValues: OtherStruct, public uniformBuffer: GPUBuffer, public bindGroup: GPUBindGroup) {}
 }
 
 export class WebGPU_Uniforms_Renderer extends Renderer {
@@ -60,11 +79,15 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
       code: /* wgsl */ `
           struct OurStruct{
             color : vec4f , 
-            scale : vec2f , 
             offset : vec2f,
           };
 
+          struct OtherStruct{
+            scale : vec2f,
+          };
+
           @group(0) @binding(0) var<uniform> ourStruct : OurStruct;
+          @group(0) @binding(1) var<uniform> otherStruct : OtherStruct;
 
           @vertex fn vertexMain( @builtin(vertex_index) vertexIndex : u32 ) -> @builtin(position) vec4f {
             let pos = array(
@@ -72,8 +95,7 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
               vec2f(-0.5, -0.5),  // bottom left
               vec2f( 0.5, -0.5)   // bottom right
             );
-
-            return vec4f( pos[vertexIndex] * ourStruct.scale + ourStruct.offset, 0.0, 1.0 );
+            return vec4f( pos[vertexIndex] * otherStruct.scale + ourStruct.offset, 0.0, 1.0 );
           }
 
           @fragment
@@ -105,20 +127,35 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
     const kNumObjects = 100;
 
     for (let i = 0; i < kNumObjects; i++) {
-      const uniformValues = new OurStruct();
-      uniformValues.color.set([Utils.rand(), Utils.rand(), Utils.rand(), 1]);
-      uniformValues.offset.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)]);
-      uniformValues.scale.set([0.4, 0.4]);
+      const staticUniformBuffer = this.device.createBuffer({
+        label: `static uniform for obj: ${i}`,
+        size: OurStruct.byteLength(),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      {
+        const staticUniformValues = new OurStruct();
+        staticUniformValues.color.set([Utils.rand(), Utils.rand(), Utils.rand(), 1]);
+        staticUniformValues.offset.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)]);
+
+        this.device.queue.writeBuffer(staticUniformBuffer, 0, staticUniformValues.getBuffer());
+      }
+
+      const uniformValues = new OtherStruct();
 
       const uniformBuffer = this.device.createBuffer({
-        size: OurStruct.byteLength(),
+        label: `changing uniform for obj: ${i}`,
+        size: OtherStruct.byteLength(),
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
 
       const bindGroup = this.device.createBindGroup({
         label: `bind group for obj: ${i}`,
         layout: this.pipeline.getBindGroupLayout(0),
-        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+        entries: [
+          { binding: 0, resource: { buffer: staticUniformBuffer } },
+          { binding: 1, resource: { buffer: uniformBuffer } },
+        ],
       });
 
       this.objectInfos.push(new ObjectInfo(uniformValues, uniformBuffer, bindGroup));
