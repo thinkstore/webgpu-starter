@@ -14,7 +14,7 @@ export class CellRenderer extends Renderer {
 
   static async newInstance(canvas: HTMLCanvasElement): Promise<Renderer> {
     const renderer = new CellRenderer(canvas);
-    await renderer.setupGpu();
+    await renderer.init();
     return renderer;
   }
 
@@ -73,7 +73,7 @@ export class CellRenderer extends Renderer {
     };
   }
 
-  protected override configurePipeline(): void {
+  protected override initPipeline(): void {
     this.createVertexBuffer();
 
     // Create the shader that will render the cells.

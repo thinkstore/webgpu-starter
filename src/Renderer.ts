@@ -11,7 +11,7 @@ export class Renderer {
   private vertexShader!: GPUShaderModule;
   private fragmentShader!: GPUShaderModule;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(protected canvas: HTMLCanvasElement) {
     if (!canvas) {
       throw new Error("Canvas bos olamaz");
     }
@@ -19,7 +19,7 @@ export class Renderer {
 
   static async newInstance(canvas: HTMLCanvasElement): Promise<Renderer> {
     const renderer = new Renderer(canvas);
-    await renderer.setupGpu();
+    await renderer.init();
     return renderer;
   }
 
@@ -27,63 +27,54 @@ export class Renderer {
     requestAnimationFrame(this.render);
   }
 
-  public async setupGpu() {
-    this.device = await this.get_gpu_device();
-    this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-    this.context = this.configure_canvas(this.device, this.presentationFormat);
-
-    this.loadShaders();
-    this.configurePipeline();
+  public async init() {
+    await this.initDevice();
+    this.initCanvas(this.device);
+    this.initPipeline();
   }
 
-  private async get_gpu_device(): Promise<GPUDevice> {
+  private async initDevice() {
     const adapter = await navigator.gpu?.requestAdapter();
     const device = await adapter?.requestDevice();
     if (!device) {
       throw new Error("Browser does not support WebGPU");
     }
-    return device;
+    this.device = device;
   }
 
-  private configure_canvas(device: GPUDevice, presentationFormat: GPUTextureFormat): GPUCanvasContext {
+  private initCanvas(device: GPUDevice) {
+    this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
     const context = this.canvas.getContext("webgpu");
     if (!context) {
       throw new Error("Failed to get canvas context");
     }
     context.configure({
       device,
-      format: presentationFormat,
+      format: this.presentationFormat,
     });
-    return context;
+    this.context = context;
   }
 
-  private loadShaders() {
-    this.loadVertexShader();
-    this.loadFragmentShader();
-  }
-
-  protected loadVertexShader() {
-    this.vertexShader = this.device.createShaderModule({
+  protected initPipeline() {
+    const vs = this.device.createShaderModule({
       label: "Vertex Shader",
       code: vertShader,
     });
-  }
-
-  protected loadFragmentShader() {
-    this.fragmentShader = this.device.createShaderModule({
+    const fs = this.device.createShaderModule({
       label: "Fragment Shader",
       code: fragShader,
     });
-  }
 
-  protected configurePipeline() {
-    this.loadShaders();
     this.pipeline = this.device.createRenderPipeline({
       label: "Render Pipeline",
       layout: "auto",
-      vertex: { module: this.vertexShader },
+      vertex: {
+        entryPoint: "vs",
+        module: vs,
+      },
       fragment: {
-        module: this.fragmentShader,
+        entryPoint: "fs",
+        module: fs,
         targets: [{ format: this.presentationFormat }],
       },
     });
