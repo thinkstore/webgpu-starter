@@ -1,3 +1,4 @@
+import { Circle } from "./Circle";
 import { Renderer } from "./Renderer";
 import { Utils } from "./Utils";
 
@@ -78,6 +79,7 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
   private changingStorageBuffer!: GPUBuffer;
   private changingStorageValues!: Float32Array;
   private kNumObjects = 100;
+  private circle!: Circle;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -93,6 +95,9 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
       code: /* wgsl */ `
+          struct Vertex {
+            position: vec2f,
+          };
 
           struct VSOutput {
             @builtin(position) position : vec4f,
@@ -110,20 +115,15 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
 
           @group(0) @binding(0) var<storage,read> staticParams : array<StaticParameters>;
           @group(0) @binding(1) var<storage,read> changingParams : array<ChangingParameters>;
+          @group(0) @binding(2) var<storage,read> vertices : array<Vertex>;
 
           @vertex fn vertexMain( @builtin(vertex_index) vertexIndex : u32 , @builtin(instance_index) instanceIndex : u32 ) -> VSOutput {
-            let pos = array(
-              vec2f( 0.0,  0.5),  // top center
-              vec2f(-0.5, -0.5),  // bottom left
-              vec2f( 0.5, -0.5)   // bottom right
-            );
-
             let changingParameters = changingParams[instanceIndex];
             let staticParameters = staticParams[instanceIndex];
 
             var vsOut : VSOutput;
 
-            vsOut.position = vec4f( pos[vertexIndex] * changingParameters.scale + staticParameters.offset, 0.0, 1.0 );
+            vsOut.position = vec4f( vertices[vertexIndex].position * changingParameters.scale + staticParameters.offset, 0.0, 1.0 );
             vsOut.color = staticParameters.color;
             return vsOut;
           }
@@ -181,12 +181,21 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
 
     this.device.queue.writeBuffer(staticStorageBuffer, 0, staticStorageValues);
 
+    this.circle = new Circle({ radius: 0.5, innerRadius: 0.25 });
+    const vertexStoragBuffer = this.device.createBuffer({
+      label: "storage buffer vertices",
+      size: this.circle.vertexData.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(vertexStoragBuffer, 0, this.circle.vertexData.buffer);
+
     this.bindGroup = this.device.createBindGroup({
       label: "bind group for objects",
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: staticStorageBuffer } },
         { binding: 1, resource: { buffer: this.changingStorageBuffer } },
+        { binding: 2, resource: { buffer: vertexStoragBuffer } },
       ],
     });
   }
@@ -219,7 +228,7 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
     this.device.queue.writeBuffer(this.changingStorageBuffer, 0, this.changingStorageValues.buffer);
 
     pass.setBindGroup(0, this.bindGroup);
-    pass.draw(3, this.kNumObjects);
+    pass.draw(this.circle.numVertices, this.kNumObjects);
 
     pass.end();
 
