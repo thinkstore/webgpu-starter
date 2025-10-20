@@ -8,16 +8,27 @@ class StaticParameters {
 
   constructor() {
     this.buffer = new ArrayBuffer(32); // toplam 32 byte
-    this.color = new Float32Array(this.buffer, 0, 4);
-    this.offset = new Float32Array(this.buffer, 16, 2);
+    this.color = new Float32Array(this.buffer, 0, 4); //offset 0/4 yaparak bulunabilir
+    this.offset = new Float32Array(this.buffer, 16, 2); //offset 16/4 yaparak bulunabilir
   }
 
   getBuffer(): ArrayBuffer {
     return this.buffer;
   }
 
-  static byteLength() {
+  static get byteLength() {
     return 32;
+  }
+
+  static get length() {
+    return 32 / 4;
+  }
+
+  static get colorOffset() {
+    return 0;
+  }
+  static get offsetOffset() {
+    return 4;
   }
 
   logValues() {
@@ -39,8 +50,16 @@ class ChangingParameters {
     return this.buffer;
   }
 
-  static byteLength() {
+  static get byteLength() {
     return 8;
+  }
+
+  static get length() {
+    return 8 / 4;
+  }
+
+  static get scaleOffset() {
+    return 0;
   }
 
   logValues() {
@@ -49,15 +68,17 @@ class ChangingParameters {
 }
 
 class ObjectInfo {
-  constructor(
-    public uniformValues: ChangingParameters,
-    public uniformBuffer: GPUBuffer,
-    public bindGroup: GPUBindGroup
-  ) {}
+  constructor(public scale: number) {}
 }
 
 export class WebGPU_StorageBuffers_Renderer extends Renderer {
   private objectInfos: ObjectInfo[] = [];
+  private bindGroup!: GPUBindGroup;
+
+  private changingStorageBuffer!: GPUBuffer;
+  private changingStorageValues!: Float32Array;
+  private kNumObjects = 100;
+
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
   }
@@ -73,6 +94,12 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
       code: /* wgsl */ `
+
+          struct VSOutput {
+            @builtin(position) position : vec4f,
+            @location(0) color : vec4f,
+          }
+
           struct StaticParameters{
             color : vec4f , 
             offset : vec2f,
@@ -82,21 +109,29 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
             scale : vec2f,
           };
 
-          @group(0) @binding(0) var<storage,read> ourStruct : StaticParameters;
-          @group(0) @binding(1) var<storage,read> otherStruct : ChangingParameters;
+          @group(0) @binding(0) var<storage,read> staticParams : array<StaticParameters>;
+          @group(0) @binding(1) var<storage,read> changingParams : array<ChangingParameters>;
 
-          @vertex fn vertexMain( @builtin(vertex_index) vertexIndex : u32 ) -> @builtin(position) vec4f {
+          @vertex fn vertexMain( @builtin(vertex_index) vertexIndex : u32 , @builtin(instance_index) instanceIndex : u32 ) -> VSOutput {
             let pos = array(
               vec2f( 0.0,  0.5),  // top center
               vec2f(-0.5, -0.5),  // bottom left
               vec2f( 0.5, -0.5)   // bottom right
             );
-            return vec4f( pos[vertexIndex] * otherStruct.scale + ourStruct.offset, 0.0, 1.0 );
+
+            let changingParameters = changingParams[instanceIndex];
+            let staticParameters = staticParams[instanceIndex];
+
+            var vsOut : VSOutput;
+
+            vsOut.position = vec4f( pos[vertexIndex] * changingParameters.scale + staticParameters.offset, 0.0, 1.0 );
+            vsOut.color = staticParameters.color;
+            return vsOut;
           }
 
           @fragment
-          fn fragmentMain() -> @location(0) vec4f {
-            return ourStruct.color;
+          fn fragmentMain(vsOut : VSOutput) -> @location(0) vec4f {
+            return vsOut.color;
           }
         `,
     });
@@ -120,42 +155,42 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
       },
     });
 
-    const kNumObjects = 100;
+    const staticStorageBuffer = this.device.createBuffer({
+      label: "static storage for objects",
+      size: StaticParameters.byteLength * this.kNumObjects,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
 
-    for (let i = 0; i < kNumObjects; i++) {
-      const staticUniformBuffer = this.device.createBuffer({
-        label: `static uniform for obj: ${i}`,
-        size: StaticParameters.byteLength(),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    this.changingStorageBuffer = this.device.createBuffer({
+      label: "changing storage for objects",
+      size: ChangingParameters.byteLength * this.kNumObjects,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    const staticStorageValues = new Float32Array(StaticParameters.length * this.kNumObjects);
+    this.changingStorageValues = new Float32Array(ChangingParameters.length * this.kNumObjects);
+
+    for (let i = 0; i < this.kNumObjects; i++) {
+      let index = i * StaticParameters.length;
+
+      staticStorageValues.set([Utils.rand(), Utils.rand(), Utils.rand(), 1], index + StaticParameters.colorOffset); //color
+      staticStorageValues.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)], index + StaticParameters.offsetOffset); //offset
+
+      this.objectInfos.push({
+        scale: Utils.rand(0.1, 0.6), //scale
       });
-
-      {
-        const staticUniformValues = new StaticParameters();
-        staticUniformValues.color.set([Utils.rand(), Utils.rand(), Utils.rand(), 1]);
-        staticUniformValues.offset.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)]);
-
-        this.device.queue.writeBuffer(staticUniformBuffer, 0, staticUniformValues.getBuffer());
-      }
-
-      const changingUniformValues = new ChangingParameters();
-
-      const changingUniformBuffer = this.device.createBuffer({
-        label: `changing uniform for obj: ${i}`,
-        size: ChangingParameters.byteLength(),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      });
-
-      const bindGroup = this.device.createBindGroup({
-        label: `bind group for obj: ${i}`,
-        layout: this.pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: staticUniformBuffer } },
-          { binding: 1, resource: { buffer: changingUniformBuffer } },
-        ],
-      });
-
-      this.objectInfos.push(new ObjectInfo(changingUniformValues, changingUniformBuffer, bindGroup));
     }
+
+    this.device.queue.writeBuffer(staticStorageBuffer, 0, staticStorageValues);
+
+    this.bindGroup = this.device.createBindGroup({
+      label: "bind group for objects",
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: staticStorageBuffer } },
+        { binding: 1, resource: { buffer: this.changingStorageBuffer } },
+      ],
+    });
   }
 
   protected frame() {
@@ -178,12 +213,15 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
 
     const aspect = this.canvas.width / this.canvas.height;
 
-    for (const object of this.objectInfos) {
-      object.uniformValues.scale.set([0.4 / aspect, 0.4]);
-      this.device.queue.writeBuffer(object.uniformBuffer, 0, object.uniformValues.getBuffer());
-      pass.setBindGroup(0, object.bindGroup);
-      pass.draw(3);
-    }
+    this.objectInfos.forEach((info, i) => {
+      const index = i * ChangingParameters.length;
+      this.changingStorageValues.set([info.scale / aspect, info.scale], index + ChangingParameters.scaleOffset);
+    });
+
+    this.device.queue.writeBuffer(this.changingStorageBuffer, 0, this.changingStorageValues.buffer);
+
+    pass.setBindGroup(0, this.bindGroup);
+    pass.draw(3, this.kNumObjects);
 
     pass.end();
 
