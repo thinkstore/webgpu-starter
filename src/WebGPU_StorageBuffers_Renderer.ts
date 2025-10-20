@@ -90,7 +90,6 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
   }
 
   protected override initPipeline(): void {
-    // Create the shader that will render the cells.
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
       code: /* wgsl */ `
@@ -136,7 +135,6 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
         `,
     });
 
-    // Create a pipeline that renders the cell.
     this.pipeline = this.device.createRenderPipeline({
       label: "triangle pipeline with uniforms",
       layout: "auto",
