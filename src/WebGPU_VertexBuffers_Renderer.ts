@@ -105,7 +105,7 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             @location(1) color : vec4f,
             @location(2) offset : vec2f,
             @location(3) scale : vec2f,
-            @location(4) perVertexColor : vec3f,
+            @location(4) perVertexColor : vec4f,
           };
 
           struct VSOutput {
@@ -113,22 +113,12 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             @location(0) color : vec4f,
           }
 
-          struct StaticParameters{
-            color : vec4f , 
-            offset : vec2f,
-          };
-
-          struct ChangingParameters{
-            scale : vec2f,
-          };
-
-
           @vertex fn vertexMain( vertex : Vertex ) -> VSOutput {
 
             var vsOut : VSOutput;
 
             vsOut.position = vec4f( vertex.position * vertex.scale + vertex.offset, 0.0, 1.0 );
-            vsOut.color = vertex.color * vec4f(vertex.perVertexColor ,1);
+            vsOut.color = vertex.color * vertex.perVertexColor ;
             return vsOut;
           }
 
@@ -139,7 +129,7 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
         `,
     });
 
-    const staticInstanceUnitSize = 4 * 4 + 2 * 4;
+    const staticInstanceUnitSize = 4 + 2 * 4;
     const changingInstanceUnitSize = 2 * 4;
     this.pipeline = this.device.createRenderPipeline({
       label: "triangle pipeline with uniforms",
@@ -149,18 +139,18 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
         entryPoint: "vertexMain",
         buffers: [
           {
-            arrayStride: 5 * 4, // 2 floats, 4 bytes each
+            arrayStride: 2 * 4 + 4, // 2 floats, 4 bytes each
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x2" }, // position
-              { shaderLocation: 4, offset: 8, format: "float32x3" }, // perVertexColor
+              { shaderLocation: 4, offset: 8, format: "unorm8x4" }, // perVertexColor
             ],
           },
           {
             arrayStride: staticInstanceUnitSize, //color + offset
             stepMode: "instance",
             attributes: [
-              { shaderLocation: 1, offset: 0, format: "float32x4" }, // color
-              { shaderLocation: 2, offset: 16, format: "float32x2" }, // offset
+              { shaderLocation: 1, offset: 0, format: "unorm8x4" }, // color
+              { shaderLocation: 2, offset: 4, format: "float32x2" }, // offset
             ],
           },
           {
@@ -193,25 +183,31 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
 
-    const staticValues = new Float32Array(this.staticVertexBuffer.size / 4);
     this.changingStorageValues = new Float32Array(this.changingVertexBuffer.size / 4);
+
+    const staticValuesU8 = new Uint8Array(this.staticVertexBuffer.size);
+    const staticValuesF32 = new Float32Array(staticValuesU8.buffer);
 
     // offsets to the various uniform values in float32 indices
     const kColorOffset = 0;
-    const kOffsetOffset = 4;
+    const kOffsetOffset = 1;
 
     for (let i = 0; i < this.kNumObjects; i++) {
-      let index = i * (staticInstanceUnitSize / 4);
+      const staticOffsetU8 = i * staticInstanceUnitSize;
+      const staticOffsetF32 = staticOffsetU8 / 4;
 
-      staticValues.set([Utils.rand(), Utils.rand(), Utils.rand(), 1], index + kColorOffset); //color
-      staticValues.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)], index + kOffsetOffset); //offset
+      staticValuesU8.set(
+        [Utils.rand() * 255, Utils.rand() * 255, Utils.rand() * 255, 255],
+        staticOffsetU8 + kColorOffset
+      ); //color
+      staticValuesF32.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)], staticOffsetF32 + kOffsetOffset); //offset
 
       this.objectInfos.push({
         scale: Utils.rand(0.1, 0.6), //scale
       });
     }
 
-    this.device.queue.writeBuffer(this.staticVertexBuffer, 0, staticValues);
+    this.device.queue.writeBuffer(this.staticVertexBuffer, 0, staticValuesF32);
 
     this.circle = new Circle({ radius: 0.5, innerRadius: 0.25 });
     this.vertexBuffer = this.device.createBuffer({

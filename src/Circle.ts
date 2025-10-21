@@ -18,15 +18,22 @@ export class Circle {
     endAngle = Math.PI * 2,
   }: CircleOptions = {}) {
     this.numVertices = numSubdivisions * 3 * 2;
-    this.vertexData = new Float32Array(this.numVertices * (2 + 3)); // 2 values (x, y) per vertex
+    // 2 32-bit values for position (xy) and 1 32-bit value for color (rgb_)
+    // The 32-bit color value will be written/read as 4 8-bit values
+    this.vertexData = new Float32Array(this.numVertices * (2 + 1));
+    const colorData = new Uint8Array(this.vertexData.buffer);
+
     let offset = 0;
+    let colorOffset = 8;
     const addVertex = (x: number, y: number, r: number, g: number, b: number): void => {
       this.vertexData[offset++] = x;
       this.vertexData[offset++] = y;
 
-      this.vertexData[offset++] = r;
-      this.vertexData[offset++] = g;
-      this.vertexData[offset++] = b;
+      offset += 1; // skip the color
+      colorData[colorOffset++] = r * 255;
+      colorData[colorOffset++] = g * 255;
+      colorData[colorOffset++] = b * 255;
+      colorOffset += 9; // skip extra byte and the position
     };
 
     const innerColor: [number, number, number] = [1, 1, 1];
