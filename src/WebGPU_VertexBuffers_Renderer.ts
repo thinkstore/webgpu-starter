@@ -105,6 +105,7 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             @location(1) color : vec4f,
             @location(2) offset : vec2f,
             @location(3) scale : vec2f,
+            @location(4) perVertexColor : vec3f,
           };
 
           struct VSOutput {
@@ -127,7 +128,7 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             var vsOut : VSOutput;
 
             vsOut.position = vec4f( vertex.position * vertex.scale + vertex.offset, 0.0, 1.0 );
-            vsOut.color = vertex.color;
+            vsOut.color = vertex.color * vec4f(vertex.perVertexColor ,1);
             return vsOut;
           }
 
@@ -148,9 +149,10 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
         entryPoint: "vertexMain",
         buffers: [
           {
-            arrayStride: 2 * 4, // 2 floats, 4 bytes each
+            arrayStride: 5 * 4, // 2 floats, 4 bytes each
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x2" }, // position
+              { shaderLocation: 4, offset: 8, format: "float32x3" }, // perVertexColor
             ],
           },
           {
@@ -164,7 +166,7 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
           {
             arrayStride: changingInstanceUnitSize,
             stepMode: "instance",
-            attributes: [{ shaderLocation: 3, offset: 0, format: "float32x2" }],
+            attributes: [{ shaderLocation: 3, offset: 0, format: "float32x2" }], //scale
           },
         ],
       },
