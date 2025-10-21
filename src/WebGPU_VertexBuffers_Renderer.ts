@@ -78,6 +78,10 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
 
   private changingStorageBuffer!: GPUBuffer;
   private changingStorageValues!: Float32Array;
+
+  private staticVertexBuffer!: GPUBuffer;
+  private changingVertexBuffer!: GPUBuffer;
+
   private kNumObjects = 100;
   private circle!: Circle;
   private vertexBuffer!: GPUBuffer;
@@ -98,6 +102,9 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
       code: /* wgsl */ `
           struct Vertex {
             @location(0) position: vec2f,
+            @location(1) color : vec4f,
+            @location(2) offset : vec2f,
+            @location(3) scale : vec2f,
           };
 
           struct VSOutput {
@@ -114,18 +121,13 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             scale : vec2f,
           };
 
-          @group(0) @binding(0) var<storage,read> staticParams : array<StaticParameters>;
-          @group(0) @binding(1) var<storage,read> changingParams : array<ChangingParameters>;
-          @group(0) @binding(2) var<storage,read> vertices : array<Vertex>;
 
-          @vertex fn vertexMain( vertex : Vertex , @builtin(instance_index) instanceIndex : u32 ) -> VSOutput {
-            let changingParameters = changingParams[instanceIndex];
-            let staticParameters = staticParams[instanceIndex];
+          @vertex fn vertexMain( vertex : Vertex ) -> VSOutput {
 
             var vsOut : VSOutput;
 
-            vsOut.position = vec4f( vertex.position * changingParameters.scale + staticParameters.offset, 0.0, 1.0 );
-            vsOut.color = staticParameters.color;
+            vsOut.position = vec4f( vertex.position * vertex.scale + vertex.offset, 0.0, 1.0 );
+            vsOut.color = vertex.color;
             return vsOut;
           }
 
@@ -136,6 +138,8 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
         `,
     });
 
+    const staticInstanceUnitSize = 4 * 4 + 2 * 4;
+    const changingInstanceUnitSize = 2 * 4;
     this.pipeline = this.device.createRenderPipeline({
       label: "triangle pipeline with uniforms",
       layout: "auto",
@@ -148,6 +152,19 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x2" }, // position
             ],
+          },
+          {
+            arrayStride: staticInstanceUnitSize, //color + offset
+            stepMode: "instance",
+            attributes: [
+              { shaderLocation: 1, offset: 0, format: "float32x4" }, // color
+              { shaderLocation: 2, offset: 16, format: "float32x2" }, // offset
+            ],
+          },
+          {
+            arrayStride: changingInstanceUnitSize,
+            stepMode: "instance",
+            attributes: [{ shaderLocation: 3, offset: 0, format: "float32x2" }],
           },
         ],
       },
@@ -162,33 +179,37 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
       },
     });
 
-    const staticStorageBuffer = this.device.createBuffer({
-      label: "static storage for objects",
-      size: StaticParameters.byteLength * this.kNumObjects,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    this.staticVertexBuffer = this.device.createBuffer({
+      label: "static vertex for objects",
+      size: staticInstanceUnitSize * this.kNumObjects,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
 
-    this.changingStorageBuffer = this.device.createBuffer({
-      label: "changing storage for objects",
-      size: ChangingParameters.byteLength * this.kNumObjects,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    this.changingVertexBuffer = this.device.createBuffer({
+      label: "changing vertex for objects",
+      size: changingInstanceUnitSize * this.kNumObjects,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
 
-    const staticStorageValues = new Float32Array(StaticParameters.length * this.kNumObjects);
-    this.changingStorageValues = new Float32Array(ChangingParameters.length * this.kNumObjects);
+    const staticValues = new Float32Array(this.staticVertexBuffer.size / 4);
+    this.changingStorageValues = new Float32Array(this.changingVertexBuffer.size / 4);
+
+    // offsets to the various uniform values in float32 indices
+    const kColorOffset = 0;
+    const kOffsetOffset = 4;
 
     for (let i = 0; i < this.kNumObjects; i++) {
-      let index = i * StaticParameters.length;
+      let index = i * (staticInstanceUnitSize / 4);
 
-      staticStorageValues.set([Utils.rand(), Utils.rand(), Utils.rand(), 1], index + StaticParameters.colorOffset); //color
-      staticStorageValues.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)], index + StaticParameters.offsetOffset); //offset
+      staticValues.set([Utils.rand(), Utils.rand(), Utils.rand(), 1], index + kColorOffset); //color
+      staticValues.set([Utils.rand(-0.9, 0.9), Utils.rand(-0.9, 0.9)], index + kOffsetOffset); //offset
 
       this.objectInfos.push({
         scale: Utils.rand(0.1, 0.6), //scale
       });
     }
 
-    this.device.queue.writeBuffer(staticStorageBuffer, 0, staticStorageValues);
+    this.device.queue.writeBuffer(this.staticVertexBuffer, 0, staticValues);
 
     this.circle = new Circle({ radius: 0.5, innerRadius: 0.25 });
     this.vertexBuffer = this.device.createBuffer({
@@ -197,15 +218,6 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(this.vertexBuffer, 0, this.circle.vertexData.buffer);
-
-    this.bindGroup = this.device.createBindGroup({
-      label: "bind group for objects",
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: staticStorageBuffer } },
-        { binding: 1, resource: { buffer: this.changingStorageBuffer } },
-      ],
-    });
   }
 
   protected frame() {
@@ -226,17 +238,19 @@ export class WebGPU_VertexBuffers_Renderer extends Renderer {
     const pass = command_encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(this.pipeline);
     pass.setVertexBuffer(0, this.vertexBuffer);
+    pass.setVertexBuffer(1, this.staticVertexBuffer);
+    pass.setVertexBuffer(2, this.changingVertexBuffer);
 
     const aspect = this.canvas.width / this.canvas.height;
 
+    const kScaleOffset = 0;
     this.objectInfos.forEach((info, i) => {
-      const index = i * ChangingParameters.length;
-      this.changingStorageValues.set([info.scale / aspect, info.scale], index + ChangingParameters.scaleOffset);
+      const index = (i * this.changingVertexBuffer.size) / this.kNumObjects / 4;
+      this.changingStorageValues.set([info.scale / aspect, info.scale], index + kScaleOffset);
     });
 
-    this.device.queue.writeBuffer(this.changingStorageBuffer, 0, this.changingStorageValues.buffer);
+    this.device.queue.writeBuffer(this.changingVertexBuffer, 0, this.changingStorageValues.buffer);
 
-    pass.setBindGroup(0, this.bindGroup);
     pass.draw(this.circle.numVertices, this.kNumObjects);
 
     pass.end();
