@@ -1,10 +1,31 @@
 import { Renderer } from "./Renderer";
+import { Pane } from "tweakpane";
 
 export class WebGPU_Texture_Renderer extends Renderer {
-  private bindGroup!: GPUBindGroup;
+  private pane!: Pane;
+  private bindGroups: GPUBindGroup[] = [];
+  settings = {
+    addressModeU: "repeat",
+    addressModeV: "repeat",
+    magFilter: "linear",
+  };
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
+    this.pane = new Pane();
+
+    this.pane.addBinding(this.settings, "addressModeU", {
+      options: { repeat: "repeat", "clamp-to-edge": "clamp-to-edge" },
+    });
+    this.pane.addBinding(this.settings, "addressModeV", {
+      options: { repeat: "repeat", "clamp-to-edge": "clamp-to-edge" },
+    });
+    this.pane.addBinding(this.settings, "magFilter", { options: { nearest: "nearest", linear: "linear" } });
+
+    this.pane.on("change", () => {
+      console.log("Güncellenen ayar:", this.settings);
+      // Örneğin: WebGPU sampler'ı yeniden oluştur
+    });
   }
 
   static async newInstance(canvas: HTMLCanvasElement): Promise<Renderer> {
@@ -81,13 +102,13 @@ export class WebGPU_Texture_Renderer extends Renderer {
     const b = [0, 0, 255, 255]; // blue
     // prettier-ignore
     const textureData = new Uint8Array([
-    b, _, _, _, _,
-    _, y, y, y, _,
-    _, y, _, _, _,
-    _, y, y, _, _,
-    _, y, _, _, _,
-    _, y, _, _, _,
-    _, _, _, _, _,
+      _, _, _, _, _,
+      _, y, _, _, _,
+      _, y, _, _, _,
+      _, y, y, _, _,
+      _, y, _, _, _,
+      _, y, y, y, _,
+      b, _, _, _, _,
     ].flat());
 
     const texture = this.device.createTexture({
@@ -104,15 +125,21 @@ export class WebGPU_Texture_Renderer extends Renderer {
       { width: kTextureWidth, height: kTextureHeight }
     );
 
-    const sampler = this.device.createSampler();
-
-    this.bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: sampler },
-        { binding: 1, resource: texture.createView() },
-      ],
-    });
+    for (let i = 0; i < 8; i++) {
+      const sampler = this.device.createSampler({
+        addressModeU: i & 1 ? "repeat" : "clamp-to-edge",
+        addressModeV: i & 2 ? "repeat" : "clamp-to-edge",
+        magFilter: i & 4 ? "linear" : "nearest",
+      });
+      const bindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: sampler },
+          { binding: 1, resource: texture.createView() },
+        ],
+      });
+      this.bindGroups.push(bindGroup);
+    }
   }
 
   protected frame() {
@@ -130,9 +157,15 @@ export class WebGPU_Texture_Renderer extends Renderer {
       ],
     };
 
+    const ndx =
+      (this.settings.addressModeU === "repeat" ? 1 : 0) +
+      (this.settings.addressModeV === "repeat" ? 2 : 0) +
+      (this.settings.magFilter === "linear" ? 4 : 0);
+    const bindGroup = this.bindGroups[ndx];
+
     const pass = command_encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
 
