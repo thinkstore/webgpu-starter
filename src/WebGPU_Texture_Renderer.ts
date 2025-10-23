@@ -1,13 +1,27 @@
 import { Renderer } from "./Renderer";
 import { Pane } from "tweakpane";
+import { convertImageDataToMipLevels, createBlendedMipmap, createCheckedMipmap, type MipLevel } from "./Utils";
+import { mat4 } from "wgpu-matrix";
+
+class ObjectInfo {
+  constructor(
+    public bindGroups: GPUBindGroup[],
+    public matrix: Float32Array,
+    public uniformValues: Float32Array,
+    public uniformBuffer: GPUBuffer
+  ) {}
+}
 
 export class WebGPU_Texture_Renderer extends Renderer {
   private pane!: Pane;
-  private bindGroups: GPUBindGroup[] = [];
+  private textures: GPUTexture[] = [];
+  private objectInfos: ObjectInfo[] = [];
+
   settings = {
     addressModeU: "repeat",
     addressModeV: "repeat",
     magFilter: "linear",
+    texture: "first",
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -21,6 +35,7 @@ export class WebGPU_Texture_Renderer extends Renderer {
       options: { repeat: "repeat", "clamp-to-edge": "clamp-to-edge" },
     });
     this.pane.addBinding(this.settings, "magFilter", { options: { nearest: "nearest", linear: "linear" } });
+    this.pane.addBinding(this.settings, "texture", { options: { first: "first", second: "second" } });
 
     this.pane.on("change", () => {
       console.log("Güncellenen ayar:", this.settings);
@@ -34,6 +49,31 @@ export class WebGPU_Texture_Renderer extends Renderer {
     return renderer;
   }
 
+  private createTextureWithMips(mips: MipLevel[], label: string): GPUTexture {
+    const texture = this.device.createTexture({
+      label,
+      size: {
+        width: mips[0].width,
+        height: mips[0].height,
+        depthOrArrayLayers: 1,
+      },
+      mipLevelCount: mips.length,
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+
+    mips.forEach(({ data, width, height }, mipLevel) => {
+      this.device.queue.writeTexture(
+        { texture, mipLevel },
+        data.buffer,
+        { bytesPerRow: width * 4 },
+        { width: width, height: height }
+      );
+    });
+
+    return texture;
+  }
+
   protected override initPipeline(): void {
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
@@ -42,6 +82,12 @@ export class WebGPU_Texture_Renderer extends Renderer {
             @builtin(position) position: vec4f,
             @location(0) texcoord : vec2f,
           }
+
+          struct Uniforms{
+            matrix : mat4x4f,
+          }
+
+          @group(0) @binding(2) var<uniform> uni : Uniforms;
 
           @vertex fn vertexMain( @builtin(vertex_index) vertexIndex : u32 ) -> VSOutput {
 
@@ -61,8 +107,8 @@ export class WebGPU_Texture_Renderer extends Renderer {
             var vsOut : VSOutput;
 
             let xy = pos[vertexIndex];
-            vsOut.position = vec4f( xy , 0.0 , 1.0 );
-            vsOut.texcoord = xy;
+            vsOut.position = uni.matrix * vec4f( xy , 0.0 , 1.0 );
+            vsOut.texcoord = xy * vec2f(1,50);
             return vsOut;
           }
 
@@ -95,54 +141,60 @@ export class WebGPU_Texture_Renderer extends Renderer {
       },
     });
 
-    const kTextureWidth = 5;
-    const kTextureHeight = 7;
-    const _ = [255, 0, 0, 255]; // red
-    const y = [255, 255, 0, 255]; // yellow
-    const b = [0, 0, 255, 255]; // blue
-    // prettier-ignore
-    const textureData = new Uint8Array([
-      _, _, _, _, _,
-      _, y, _, _, _,
-      _, y, _, _, _,
-      _, y, y, _, _,
-      _, y, _, _, _,
-      _, y, y, y, _,
-      b, _, _, _, _,
-    ].flat());
-
-    const texture = this.device.createTexture({
-      label: "yellow F on red",
-      size: [kTextureWidth, kTextureHeight],
-      format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-
-    this.device.queue.writeTexture(
-      { texture },
-      textureData,
-      { bytesPerRow: kTextureWidth * 4 },
-      { width: kTextureWidth, height: kTextureHeight }
-    );
+    this.textures = [
+      this.createTextureWithMips(createBlendedMipmap(), "blended"),
+      this.createTextureWithMips(convertImageDataToMipLevels(createCheckedMipmap()), "checked"),
+    ];
 
     for (let i = 0; i < 8; i++) {
       const sampler = this.device.createSampler({
-        addressModeU: i & 1 ? "repeat" : "clamp-to-edge",
-        addressModeV: i & 2 ? "repeat" : "clamp-to-edge",
-        magFilter: i & 4 ? "linear" : "nearest",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+        magFilter: i & 1 ? "linear" : "nearest",
+        minFilter: i & 2 ? "linear" : "nearest",
+        mipmapFilter: i & 4 ? "linear" : "nearest",
       });
-      const bindGroup = this.device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: sampler },
-          { binding: 1, resource: texture.createView() },
-        ],
+
+      // create a buffer for the uniform values
+      const uniformBufferSize = 64;
+      const uniformBuffer = this.device.createBuffer({
+        label: "uniforms for quad",
+        size: uniformBufferSize,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
-      this.bindGroups.push(bindGroup);
+
+      const uniformValues = new Float32Array(uniformBufferSize / 4);
+      const matrix = uniformValues.subarray(0, 16);
+
+      const bindGroups = this.textures.map((texture) => {
+        return this.device.createBindGroup({
+          layout: this.pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: sampler },
+            { binding: 1, resource: texture.createView() },
+            { binding: 2, resource: { buffer: uniformBuffer } },
+          ],
+        });
+      });
+
+      this.objectInfos.push(new ObjectInfo(bindGroups, matrix, uniformValues, uniformBuffer));
     }
   }
 
   protected frame() {
+    const fov = (60 * Math.PI) / 180; // 60 degrees in radians
+    const aspect = this.canvas.clientWidth / this.canvas.clientHeight;
+    const zNear = 1;
+    const zFar = 2000;
+    const projectionMatrix = mat4.perspective(fov, aspect, zNear, zFar);
+
+    const cameraPosition = [0, 0, 2];
+    const up = [0, 1, 0];
+    const target = [0, 0, 0];
+    const cameraMatrix = mat4.lookAt(cameraPosition, target, up);
+    const viewMatrix = mat4.inverse(cameraMatrix);
+    const viewProjectionMatrix = mat4.multiply(projectionMatrix, viewMatrix);
+
     const command_encoder = this.device.createCommandEncoder();
     const curTextureView = this.context.getCurrentTexture().createView();
     const renderPassDescriptor: GPURenderPassDescriptor = {
@@ -150,23 +202,39 @@ export class WebGPU_Texture_Renderer extends Renderer {
       colorAttachments: [
         {
           view: curTextureView,
-          clearValue: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 },
+          clearValue: { r: 0.3, g: 0.3, b: 0.3, a: 1.0 },
+
           loadOp: "clear",
           storeOp: "store",
         },
       ],
     };
 
-    const ndx =
-      (this.settings.addressModeU === "repeat" ? 1 : 0) +
-      (this.settings.addressModeV === "repeat" ? 2 : 0) +
-      (this.settings.magFilter === "linear" ? 4 : 0);
-    const bindGroup = this.bindGroups[ndx];
-
     const pass = command_encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(6);
+
+    this.objectInfos.forEach(({ bindGroups, matrix, uniformBuffer, uniformValues }, i) => {
+      const bindGroup = bindGroups[this.settings.texture == "first" ? 0 : 1];
+
+      const xSpacing = 1.2;
+      const ySpacing = 0.7;
+      const zDepth = 50;
+
+      const x = (i % 4) - 1.5;
+      const y = i < 4 ? 1 : -1;
+
+      mat4.translate(viewProjectionMatrix, [x * xSpacing, y * ySpacing, -zDepth * 0.5], matrix);
+      mat4.rotateX(matrix, 0.5 * Math.PI, matrix);
+      mat4.scale(matrix, [1, zDepth * 2, 1], matrix);
+      mat4.translate(matrix, [-0.5, -0.5, 0], matrix);
+
+      // copy the values from JavaScript to the GPU
+      this.device.queue.writeBuffer(uniformBuffer, 0, uniformValues.buffer);
+
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(6); // call our vertex shader 6 times
+    });
+
     pass.end();
 
     this.device.queue.submit([command_encoder.finish()]);
