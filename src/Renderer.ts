@@ -38,7 +38,7 @@ export class Renderer {
   public async init() {
     await this.initDevice();
     this.initCanvas(this.device);
-    this.initPipeline();
+    await this.initPipeline();
   }
 
   private async initDevice() {
@@ -63,7 +63,7 @@ export class Renderer {
     this.context = context;
   }
 
-  protected initPipeline() {
+  protected async initPipeline() {
     const vs = this.device.createShaderModule({
       label: "Vertex Shader",
       code: vertShader,

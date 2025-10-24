@@ -1,4 +1,5 @@
 import "./style.css";
+import { WebGPU_LoadingImages_Renderer } from "./WebGPU_LoadingImages_Renderer.ts";
 import { WebGPU_Texture_Renderer } from "./WebGPU_Texture_Renderer.ts";
 // import { CellRenderer } from "./CellRenderer.ts";
 // import { Renderer } from "./Renderer.ts";
@@ -10,5 +11,5 @@ const canvas = document.getElementById("gpu-canvas") as HTMLCanvasElement;
 // const renderer = await CellRenderer.newInstance(canvas);
 // const renderer = await Renderer.newInstance(canvas);
 // const renderer = await WebGPU_Uniforms_Renderer.newInstance(canvas);
-const renderer = await WebGPU_Texture_Renderer.newInstance(canvas);
+const renderer = await WebGPU_LoadingImages_Renderer.newInstance(canvas);
 renderer.startRenderLoop();

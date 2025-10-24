@@ -91,7 +91,7 @@ export class WebGPU_StorageBuffers_Renderer extends Renderer {
     return renderer;
   }
 
-  protected override initPipeline(): void {
+  protected override async initPipeline() {
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
       code: /* wgsl */ `

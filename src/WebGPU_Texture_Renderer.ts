@@ -74,7 +74,7 @@ export class WebGPU_Texture_Renderer extends Renderer {
     return texture;
   }
 
-  protected override initPipeline(): void {
+  protected override async initPipeline() {
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",
       code: /* wgsl */ `

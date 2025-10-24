@@ -72,7 +72,7 @@ export class WebGPU_Uniforms_Renderer extends Renderer {
     return renderer;
   }
 
-  protected override initPipeline(): void {
+  protected override async initPipeline() {
     // Create the shader that will render the cells.
     const module = this.device.createShaderModule({
       label: "triangle shaders with uniforms",

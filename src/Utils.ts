@@ -157,3 +157,45 @@ export function convertImageDataToMipLevels(images: ImageData[]): MipLevel[] {
     })
   );
 }
+
+export async function loadImageBitmap(url: URL): Promise<ImageBitmap> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return await createImageBitmap(blob, { colorSpaceConversion: "none" });
+}
+
+/**
+ * TextureUtils.ts
+ * Yardımcı fonksiyonlar: mipmap hesaplama, boyut analizi, texture ergonomisi
+ */
+
+/**
+ * Belirtilen boyutlara göre mipmap seviyesi hesaplar.
+ * Örnek: numMipLevels(512, 256) → 10
+ */
+export function numMipLevels(...sizes: number[]): number {
+  const maxSize = Math.max(...sizes);
+  return (1 + Math.log2(maxSize)) | 0;
+}
+
+/**
+ * Texture boyutunun power-of-two olup olmadığını kontrol eder.
+ */
+export function isPowerOfTwo(value: number): boolean {
+  return (value & (value - 1)) === 0 && value !== 0;
+}
+
+/**
+ * Texture boyutlarını normalize eder (örneğin negatif veya sıfır değerleri engeller).
+ */
+export function sanitizeTextureSize(width: number, height: number): [number, number] {
+  return [Math.max(1, width), Math.max(1, height)];
+}
+
+/**
+ * Texture için önerilen mipmap seviyesi aralığını döndürür.
+ */
+export function mipRange(width: number, height: number): number[] {
+  const levels = numMipLevels(width, height);
+  return Array.from({ length: levels }, (_, i) => i);
+}
