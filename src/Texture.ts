@@ -1,5 +1,5 @@
 import { MipGenerator } from "./MipGenerator";
-import { numMipLevels } from "./Utils";
+import { loadImageBitmap, numMipLevels } from "./Utils";
 
 type TextureOptions = {
   mips?: boolean;
@@ -8,6 +8,12 @@ type TextureOptions = {
 
 export class Texture {
   private constructor(public handle: GPUTexture) {}
+
+  static async fromUrl(device: GPUDevice, url: Url, options: TextureOptions = {}): Promise<Texture> {
+    const imageBitmap = await loadImageBitmap(url);
+    return this.fromSource(device, imageBitmap, options);
+  }
+
   static fromSource(device: GPUDevice, source: ImageBitmap, options: TextureOptions = {}): Texture {
     const mipLevelCount = options.mips ? numMipLevels(source.width, source.height) : 1;
 
@@ -19,7 +25,7 @@ export class Texture {
         height: source.height,
         depthOrArrayLayers: 1,
       },
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUBufferUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const texture = new Texture(textureHandle);

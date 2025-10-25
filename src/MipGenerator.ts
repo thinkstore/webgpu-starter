@@ -13,8 +13,8 @@ export class MipGenerator {
 
       code: /* wgsl */ `
         struct VSOutput{
-          @builtin(position) : vec4f , 
-          @location(0) : texcoord : vec2f,
+          @builtin(position) position : vec4f , 
+          @location(0)  texcoord : vec2f,
         };
 
         @vertex fn vs(
@@ -33,15 +33,15 @@ export class MipGenerator {
               vec2f( 1.0,  1.0),  // right, top
           );
 
-          var vsOut = VSOutput;
+          var vsOut : VSOutput;
           let xy = pos[vertexIndex];
           vsOut.position = vec4f(xy * 2.0 - 1.0 , 0.0 , 1.0 );
           vsOut.texcoord = vec2f( xy.x , 1.0 - xy.y);
           return vsOut;
         }
 
-        @group(0) @binding(0) var mSampler = sampler;
-        @group(0) @binding(1) var mTexture = texture_2d<f32>;
+        @group(0) @binding(0) var mSampler : sampler;
+        @group(0) @binding(1) var mTexture : texture_2d<f32>;
 
         @fragment fn fs(
           input : VSOutput 
@@ -82,6 +82,7 @@ export class MipGenerator {
 
     for (let level = 1; level < texture.mipLevelCount; level++) {
       const bindGroup = this.device.createBindGroup({
+        label: "MipGen bind group",
         layout: pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: this.sampler! },
