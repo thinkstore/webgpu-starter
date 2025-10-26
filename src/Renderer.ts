@@ -23,7 +23,6 @@ export class Renderer {
   public startRenderLoop() {
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        // const canvas = entry.target;
         const width = entry.contentBoxSize[0].inlineSize;
         const height = entry.contentBoxSize[0].blockSize;
         this.canvas.width = Math.max(1, Math.min(width, this.device.limits.maxTextureDimension2D));

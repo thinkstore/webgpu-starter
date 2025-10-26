@@ -1,5 +1,4 @@
 import { Renderer } from "./Renderer";
-import { Pane } from "tweakpane";
 
 import { mat4 } from "wgpu-matrix";
 import { Texture } from "./Texture";
@@ -14,7 +13,7 @@ class ObjectInfo {
   ) {}
 }
 
-export class WebGPU_ImportingImages_Renderer extends Renderer {
+export class WebGPU_LoadingCanvas_Renderer extends Renderer {
   private bindGroupIndex: number = 0;
   private objectInfos: ObjectInfo[] = [];
   private gui!: GUI;
@@ -38,7 +37,7 @@ export class WebGPU_ImportingImages_Renderer extends Renderer {
   }
 
   static async newInstance(canvas: HTMLCanvasElement): Promise<Renderer> {
-    const renderer = new WebGPU_ImportingImages_Renderer(canvas);
+    const renderer = new WebGPU_LoadingCanvas_Renderer(canvas);
     await renderer.init();
     return renderer;
   }
